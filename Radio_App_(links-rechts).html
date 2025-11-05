@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Stereo Radio - Dynamischer Wechsel</title>
+<style>
+body {
+  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+  background: #f4f4f9;
+  color: #333;
+  padding: 20px;
+  text-align: center;
+}
+
+h1 {
+  margin-bottom: 20px;
+  color: #222;
+}
+
+select, input[type=range] {
+  width: 90%;
+  max-width: 300px;
+  margin: 10px 0;
+}
+
+label {
+  display: block;
+  margin-top: 10px;
+  font-weight: bold;
+}
+
+button {
+  font-size: 24px;
+  padding: 20px 50px;
+  margin: 15px;
+  border: none;
+  border-radius: 30px;
+  cursor: pointer;
+  transition: 0.3s;
+  color: white;
+}
+
+#playBtn { background: #4CAF50; }
+#playBtn:hover { background: #45a049; }
+
+#stopBtn { background: #f44336; }
+#stopBtn:hover { background: #e53935; }
+
+/* Stereo-Balken */
+#stereoBar {
+  width: 320px;
+  height: 35px;
+  background: #ddd;
+  margin: 20px auto;
+  border-radius: 18px;
+  overflow: hidden;
+  position: relative;
+  box-shadow: inset 0 0 5px rgba(0,0,0,0.2);
+}
+
+#stereoIndicator {
+  width: 50%;
+  height: 100%;
+  background: linear-gradient(to right, #4CAF50 0%, #2196F3 100%);
+  position: absolute;
+  top: 0;
+  left: 0;
+  border-radius: 18px;
+  transition: left 0.2s linear;
+}
+
+/* Labels innerhalb des Containers begrenzen */
+#stereoLabels {
+  position: absolute;
+  width: 100%;
+  display: flex;
+  justify-content: space-between;
+  padding: 0 10px;
+  font-weight: bold;
+  color: #555;
+  pointer-events: none;
+  box-sizing: border-box;
+  overflow: hidden;
+}
+
+#stereoLabels span {
+  white-space: nowrap;
+  max-width: 45%;
+  text-overflow: ellipsis;
+  overflow: hidden;
+}
+</style>
+</head>
+<body>
+
+<h1>Stereo Radio</h1>
+
+<select id="streamSelect">
+  <option value="https://livestreaming-node-3.srg-ssr.ch/srgssr/regi_zentr/aac/96">SRF 1</option>
+  <option value="https://livestreaming-node-3.srg-ssr.ch/srgssr/srf2/aac/96">SRF 2</option>
+  <option value="https://livestreaming-node-3.srg-ssr.ch/srgssr/srf4news/aac/96">SRF News</option>
+  <option value="https://stream.srg-ssr.ch/srgssr/rsc_de/aac/96">Swiss Classic</option>
+</select>
+
+<label>Lautstärke: <span id="volLabel">100%</span></label>
+<input type="range" id="volume" min="0" max="1" step="0.01" value="1">
+
+<label>Min Sekunden: <span id="minLabel">5</span></label>
+<input type="range" id="minSec" min="2" max="12" step="1" value="5">
+
+<label>Max Sekunden: <span id="maxLabel">8</span></label>
+<input type="range" id="maxSec" min="2" max="12" step="1" value="8">
+
+<label>Crossfade (ms): <span id="cfLabel">2000</span></label>
+<input type="range" id="crossfade" min="1000" max="3000" step="50" value="2000">
+
+<br>
+
+<button id="playBtn">▶ Play</button>
+<button id="stopBtn">■ Stop</button>
+<p id="status">Status: gestoppt</p>
+
+<div id="stereoBar">
+  <div id="stereoIndicator"></div>
+  <div id="stereoLabels">
+    <span>Links</span>
+    <span>Rechts</span>
+  </div>
+</div>
+
+<script>
+let audioCtx;
+let audioElement;
+let track;
+let panNode;
+let panTimer;
+let currentSide = -1;
+
+const indicator = document.getElementById('stereoIndicator');
+const stereoBar = document.getElementById('stereoBar');
+
+function getRandomInterval() {
+  const minSec = parseFloat(document.getElementById('minSec').value);
+  const maxSec = parseFloat(document.getElementById('maxSec').value);
+  return (minSec + Math.random() * (maxSec - minSec)) * 1000;
+}
+
+// Berechnung: Balken innerhalb des Containers halten
+async function fadeTo(targetPan, durationMs) {
+  if (!panNode) return;
+  const steps = Math.max(1, Math.floor(durationMs / 30));
+  const startPan = panNode.pan.value;
+  const delta = (targetPan - startPan) / steps;
+  const barWidth = indicator.offsetWidth;
+  const containerWidth = stereoBar.offsetWidth;
+  const maxLeft = containerWidth - barWidth;
+
+  for (let i = 1; i <= steps; i++) {
+    const panValue = startPan + delta * i;
+    panNode.pan.setValueAtTime(panValue, audioCtx.currentTime);
+
+    // Begrenzung: Balken bleibt innerhalb
+    const leftPercent = 50 + panValue*50;
+    const leftPx = (leftPercent/100) * containerWidth;
+    const boundedLeft = Math.min(Math.max(0, leftPx), maxLeft);
+    indicator.style.left = `${boundedLeft}px`;
+
+    await new Promise(r => setTimeout(r, durationMs / steps));
+  }
+}
+
+function startPanCycle() {
+  const cf = parseFloat(document.getElementById('crossfade').value);
+  panTimer = setTimeout(async () => {
+    currentSide = -currentSide;
+    await fadeTo(currentSide, cf);
+    document.getElementById('status').innerText = "Aktuell: " + (currentSide < 0 ? "links" : "rechts");
+    startPanCycle();
+  }, getRandomInterval());
+}
+
+function initAudio(url) {
+  if (!audioCtx) {
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  }
+
+  if (audioElement) {
+    audioElement.pause();
+    audioElement.src = url;
+    audioElement.load();
+    audioElement.play().catch(() => {});
+  } else {
+    audioElement = new Audio(url);
+    audioElement.crossOrigin = "anonymous";
+    audioElement.loop = true;
+    audioElement.volume = parseFloat(document.getElementById('volume').value);
+    audioElement.play().catch(() => alert("Play drücken, falls Browser Autoplay blockiert"));
+    track = audioCtx.createMediaElementSource(audioElement);
+    panNode = audioCtx.createStereoPanner();
+    track.connect(panNode).connect(audioCtx.destination);
+  }
+
+  currentSide = -1;
+  panNode.pan.setValueAtTime(currentSide, audioCtx.currentTime);
+  indicator.style.left = "0px";
+  clearTimeout(panTimer);
+  startPanCycle();
+}
+
+// Eventlistener
+document.getElementById('playBtn').addEventListener('click', () => {
+  initAudio(document.getElementById('streamSelect').value);
+});
+
+document.getElementById('stopBtn').addEventListener('click', () => {
+  if(audioElement) audioElement.pause();
+  clearTimeout(panTimer);
+  document.getElementById('status').innerText = "Status: gestoppt";
+});
+
+document.getElementById('streamSelect').addEventListener('change', e => initAudio(e.target.value));
+document.getElementById('volume').addEventListener('input', e => {
+  if(audioElement) audioElement.volume = e.target.value;
+  document.getElementById('volLabel').innerText = Math.round(e.target.value*100) + "%";
+});
+document.getElementById('minSec').addEventListener('input', e => document.getElementById('minLabel').innerText = e.target.value);
+document.getElementById('maxSec').addEventListener('input', e => document.getElementById('maxLabel').innerText = e.target.value);
+document.getElementById('crossfade').addEventListener('input', e => document.getElementById('cfLabel').innerText = e.target.value);
+</script>
+
+</body>
+</html>
+
+
