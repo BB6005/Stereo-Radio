@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Stereo Radio - Dynamischer Wechsel</title>
+<style>
+body { font-family: sans-serif; padding: 20px; text-align: center; }
+button, select, input { font-size: 16px; padding: 5px; margin: 5px; }
+#stereoBar { width: 300px; height: 20px; background: #ccc; margin: 20px auto; position: relative; border-radius: 10px; overflow: hidden; }
+#stereoIndicator { width: 50%; height: 100%; background: #4CAF50; position: absolute; left: 0; top: 0; transition: left 0.1s linear; }
+</style>
+</head>
+<body>
+
+<h1>Stereo Radio</h1>
+
+<select id="streamSelect">
+  <option value="https://livestreaming-node-3.srg-ssr.ch/srgssr/regi_zentr/aac/96">SRF 1</option>
+  <option value="https://livestreaming-node-3.srg-ssr.ch/srgssr/srf2/aac/96">SRF 2</option>
+  <option value="https://livestreaming-node-3.srg-ssr.ch/srgssr/srf4news/aac/96">SRF News</option>
+  <option value="https://stream.srg-ssr.ch/srgssr/rsc_de/aac/96">Swiss Classic</option>
+</select>
+<br>
+
+<label>Lautstärke: <span id="volLabel">100%</span></label>
+<input type="range" id="volume" min="0" max="1" step="0.01" value="1">
+<br>
+<label>Min Sekunden: <span id="minLabel">3</span></label>
+<input type="range" id="minSec" min="1" max="10" step="1" value="3">
+<br>
+<label>Max Sekunden: <span id="maxLabel">6</span></label>
+<input type="range" id="maxSec" min="1" max="10" step="1" value="6">
+<br>
+<label>Crossfade (ms): <span id="cfLabel">500</span></label>
+<input type="range" id="crossfade" min="50" max="2000" step="50" value="500">
+<br>
+
+<button id="playBtn">Play</button>
+<button id="stopBtn">Stop</button>
+<p id="status">Status: gestoppt</p>
+
+<div id="stereoBar"><div id="stereoIndicator"></div></div>
+
+<script>
+let audioCtx;
+let audioElement;
+let track;
+let panNode;
+let panTimer;
+let currentSide = -1;
+
+// Visualisierung
+const indicator = document.getElementById('stereoIndicator');
+
+function getRandomInterval() {
+  const minSec = parseFloat(document.getElementById('minSec').value);
+  const maxSec = parseFloat(document.getElementById('maxSec').value);
+  return (minSec + Math.random() * (maxSec - minSec)) * 1000;
+}
+
+// Sanfter Übergang
+async function fadeTo(targetPan, durationMs) {
+  if (!panNode) return;
+  const steps = Math.max(1, Math.floor(durationMs / 30));
+  const startPan = panNode.pan.value;
+  const delta = (targetPan - startPan) / steps;
+  for (let i = 1; i <= steps; i++) {
+    panNode.pan.setValueAtTime(startPan + delta * i, audioCtx.currentTime);
+    indicator.style.left = `${50 + (startPan + delta * i)*50}%`;
+    await new Promise(r => setTimeout(r, durationMs / steps));
+  }
+}
+
+// Start dynamischer Pan-Zyklus
+function startPanCycle() {
+  const cf = parseFloat(document.getElementById('crossfade').value);
+  panTimer = setTimeout(async () => {
+    currentSide = -currentSide; // Wechsel links/rechts
+    await fadeTo(currentSide, cf);
+    document.getElementById('status').innerText = "Aktuell: " + (currentSide < 0 ? "links" : "rechts");
+    startPanCycle(); // Nächster Wechsel mit neuer zufälliger Dauer
+  }, getRandomInterval());
+}
+
+function initAudio(url) {
+  if (!audioCtx) {
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  }
+
+  if (audioElement) {
+    audioElement.pause();
+    audioElement.src = url;
+    audioElement.load();
+    audioElement.play().catch(() => {});
+  } else {
+    audioElement = new Audio(url);
+    audioElement.crossOrigin = "anonymous";
+    audioElement.loop = true;
+    audioElement.volume = parseFloat(document.getElementById('volume').value);
+    audioElement.play().catch(() => alert("Play drücken, falls Browser blockiert Autoplay"));
+    track = audioCtx.createMediaElementSource(audioElement);
+    panNode = audioCtx.createStereoPanner();
+    track.connect(panNode).connect(audioCtx.destination);
+  }
+
+  currentSide = -1;
+  panNode.pan.setValueAtTime(currentSide, audioCtx.currentTime);
+  indicator.style.left = "0%";
+  clearTimeout(panTimer);
+  startPanCycle();
+}
+
+// Eventlistener
+document.getElementById('playBtn').addEventListener('click', () => {
+  initAudio(document.getElementById('streamSelect').value);
+});
+
+document.getElementById('streamSelect').addEventListener('change', (e) => {
+  initAudio(e.target.value);
+});
+
+document.getElementById('stopBtn').addEventListener('click', () => {
+  if(audioElement) audioElement.pause();
+  clearTimeout(panTimer);
+  document.getElementById('status').innerText = "Status: gestoppt";
+});
+
+document.getElementById('volume').addEventListener('input', e => {
+  if(audioElement) audioElement.volume = e.target.value;
+  document.getElementById('volLabel').innerText = Math.round(e.target.value*100) + "%";
+});
+
+document.getElementById('minSec').addEventListener('input', e => document.getElementById('minLabel').innerText = e.target.value);
+document.getElementById('maxSec').addEventListener('input', e => document.getElementById('maxLabel').innerText = e.target.value);
+document.getElementById('crossfade').addEventListener('input', e => document.getElementById('cfLabel').innerText = e.target.value);
+</script>
+
+</body>
+</html>
